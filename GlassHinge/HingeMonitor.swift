@@ -167,16 +167,16 @@ final class HingeMonitor: NSObject, ObservableObject {
 
     private func registerWorkspaceObservers() {
         let ws = NSWorkspace.shared.notificationCenter
-        ws.addObserver(self, selector: #selector(screensWillSleep),
-                       name: NSWorkspace.screensWillSleepNotification, object: nil)
+        ws.addObserver(self, selector: #selector(systemWillSleep),
+                       name: NSWorkspace.willSleepNotification, object: nil)
         ws.addObserver(self, selector: #selector(screensDidWake),
                        name: NSWorkspace.screensDidWakeNotification, object: nil)
         ws.addObserver(self, selector: #selector(sessionDidBecomeActive),
                        name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
     }
 
-    @objc private func screensWillSleep() {
-        // Display is about to go dark (lid closing on sensor-less MacBooks,
+    @objc private func systemWillSleep() {
+        // System is about to sleep (lid closing on sensor-less MacBooks,
         // or idle sleep). Play the closing dissolve if there's time.
         guard sensorAvailable == false, playOnSleep else { return }
         animateProgress(to: 1, duration: 0.5)
