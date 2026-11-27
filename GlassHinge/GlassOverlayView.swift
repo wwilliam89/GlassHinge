@@ -13,17 +13,27 @@
 //  original re-implementation of that idea — no third-party assets, code,
 //  or product names are used anywhere in the app or its store listing.
 //
-//  Rebuilt here with AppKit/SwiftUI primitives only:
+//  Rebuilt here with AppKit/SwiftUI primitives only, and folded the way
+//  a MacBook actually folds: the hinge is the BOTTOM edge of the screen,
+//  so the fold works bottom-up. A fold line starts at the hinge and
+//  rises toward the top as the lid moves. Below the line the desktop is
+//  folded glass (real blur + liquid tint); above it the desktop is still
+//  flat and clear; the crease itself carries a band of light. When the
+//  lid stops, the fold melts back down to the hinge and the screen is
+//  clear again.
 //
 //    * REAL blur of what's underneath — an NSVisualEffectView with
 //      .behindWindow blending, so the user's actual desktop dissolves,
 //      not a fake screenshot. No Screen Recording permission needed.
-//    * A blue/cyan liquid-glass tint whose opacity tracks progress.
-//    * A diagonal "glass shine" band that sweeps across the screen as the
-//      hinge moves — the visible signature of light crossing folding glass.
-//    * A soft vertical refraction streak near the hinge-axis side, plus a
-//      barely-there scale (max +2%) so content feels locked in space
-//      while the "glass" moves over it.
+//      The blur is masked to the folded region below the fold line.
+//    * A blue/cyan liquid-glass tint whose opacity tracks progress,
+//      masked to the same folded region.
+//    * A horizontal crease shine that rides the fold line upward from
+//      the hinge as the lid moves — the visible signature of light
+//      crossing the crease.
+//    * A soft glow along the bottom edge, like light catching the
+//      hinge itself, plus a barely-there scale (max +2%) so content
+//      feels locked in space while the "glass" moves over it.
 //
 //  Everything is a pure function of HingeMonitor.progress, so on sensor
 //  MacBooks the hinge itself scrubs the animation; elsewhere a timed
@@ -40,48 +50,67 @@ struct GlassOverlayView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var style: GlassStyle { GlassStyle(rawValue: styleRaw) ?? .oceanBlue }
-    private var p: Double { monitor.progress * intensity }
+    private var p: Double { min(1, max(0, monitor.progress * intensity)) }
 
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
+            // The fold line starts at the hinge (bottom edge) and rises
+            // to the top as the lid moves. foldY is its distance from
+            // the top of the screen: h at rest, 0 fully folded.
+            let foldY = h * (1 - p)
+            let band: Double = 90
+            let foldTop = max(0, (foldY - band) / h)
+            let foldBottom = min(1, (foldY + band) / h)
+            // Mask: glass below the fold line, clear above it, with a
+            // soft edge at the crease.
+            let foldMask = LinearGradient(
+                gradient: Gradient(stops: [
+                    .init(color: .clear, location: foldTop),
+                    .init(color: .white, location: foldBottom)
+                ]),
+                startPoint: .top,
+                endPoint: .bottom
+            )
             ZStack {
-                // 1. Real behind-window blur (the dissolve).
+                // 1. Real behind-window blur (the dissolve), folded up
+                //    from the hinge.
                 VisualEffectBlur(material: style.material, blendingMode: .behindWindow)
                     .opacity(p)
+                    .mask(foldMask)
                     .ignoresSafeArea()
 
-                // 2. Liquid-glass tint.
+                // 2. Liquid-glass tint, same fold.
                 LinearGradient(
                     colors: style.tintColors,
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+                    startPoint: .top,
+                    endPoint: .bottom
                 )
                 .opacity(p * style.tintOpacity)
+                .mask(foldMask)
                 .ignoresSafeArea()
 
-                // 3. Diagonal glass shine sweeping with the hinge.
+                // 3. Crease shine — a horizontal band of light riding
+                //    the fold line as it rises from the hinge.
                 if !reduceMotion {
                     Rectangle()
                         .fill(
                             LinearGradient(
-                                colors: [.clear, .white.opacity(0.55), .clear],
-                                startPoint: .leading,
-                                endPoint: .trailing
+                                colors: [.clear, .white.opacity(0.6), .clear],
+                                startPoint: .top,
+                                endPoint: .bottom
                             )
                         )
-                        .frame(width: w * 0.45, height: h * 1.6)
-                        .rotationEffect(.degrees(18))
-                        .blur(radius: 30)
-                        .offset(x: -w * 0.8 + (w * 1.6 * p))
+                        .frame(width: w, height: 140)
+                        .blur(radius: 24)
+                        .offset(y: foldY - h / 2)
                         .opacity(p)
                         .ignoresSafeArea()
                 }
 
-                // 4. Edge refraction — brighter line low on the screen,
-                //    like light catching the bottom edge of folding glass
-                //    near the MacBook hinge.
+                // 4. Hinge glow — light catching the bottom edge of the
+                //    folding glass at the MacBook hinge.
                 VStack {
                     Spacer()
                     Rectangle()

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Mock App Store screenshots for GlassHinge (2560x1600).
 
-Faithful mocks of the shipped design: a desktop that gets a REAL Gaussian
-blur blend + blue liquid-glass tint + diagonal shine sweep + bottom hinge
-glow, all driven by one progress value — the same recipe as
-GlassOverlayView.swift. UI shots mirror SettingsView / the menu-bar popover.
-These are mocks for review/marketing, not captures from a running Mac.
+Faithful mocks of the shipped design: a desktop that folds bottom-up
+from the hinge — a fold line rises from the bottom edge, the desktop
+below it dissolves into real Gaussian blur + blue liquid-glass tint, a
+band of light rides the crease, and a glow sits on the hinge — all
+driven by one progress value, the same recipe as GlassOverlayView.swift.
+UI shots mirror SettingsView / the menu-bar popover. These are mocks for
+review/marketing, not captures from a running Mac.
 """
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 import pathlib, math
@@ -80,27 +82,38 @@ def desktop():
 
 # ---------------------------------------------------------------- effect
 def apply_effect(base, p):
-    """Same recipe as GlassOverlayView: blur blend, tint, shine sweep, hinge glow."""
+    """Same recipe as GlassOverlayView: bottom-up fold from the hinge.
+    The fold line starts at the bottom edge and rises as p grows; below
+    the line the desktop is folded glass (blur + tint), above it clear,
+    with a band of light riding the crease."""
+    foldY = H * (1 - p)
+    band = 180  # soft edge around the crease, px
+    # fold mask: 0 above the crease, 255 below, smooth over the band
+    mask = Image.new("L", (W, H), 0)
+    md = ImageDraw.Draw(mask)
+    for y in range(H):
+        t = (y - (foldY - band)) / (2 * band)
+        t = max(0.0, min(1.0, t))
+        a = int(255 * t * t * (3 - 2 * t))  # smoothstep
+        md.line([(0, y), (W, y)], fill=a)
     blurred = base.filter(ImageFilter.GaussianBlur(4 + 30 * p))
-    img = Image.blend(base, blurred, p * 0.96).convert("RGBA")
-    # liquid-glass tint: blue -> cyan diagonal
+    img = Image.composite(blurred, base, mask.point(lambda v: int(v * p * 0.96))).convert("RGBA")
+    # liquid-glass tint: vertical blue -> cyan, masked to the fold
     tint = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     td = ImageDraw.Draw(tint)
-    steps = 60
+    steps = 80
     for i in range(steps):
         t = i / steps
-        col = (int(40 + 30 * t), int(110 + 60 * t), int(235 - 40 * t), int(105 * p * (1 - t * 0.5)))
-        x0 = int(W * t * 1.2) - 300
-        td.line([(x0, 0), (x0 - 500, H)], fill=col, width=int(W / steps) + 30)
-    img.alpha_composite(tint.filter(ImageFilter.GaussianBlur(60)))
-    # diagonal glass shine sweeping with progress
+        col = (int(40 + 30 * t), int(110 + 60 * t), int(235 - 40 * t), 255)
+        td.line([(0, int(H * t)), (W, int(H * t))], fill=col, width=int(H / steps) + 2)
+    tint.putalpha(mask.point(lambda v: int(v * p * 0.9)))
+    img.alpha_composite(tint.filter(ImageFilter.GaussianBlur(40)))
+    # crease shine: horizontal band of light riding the fold line up
     shine = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     sd = ImageDraw.Draw(shine)
-    cx = -0.8 * W + 1.6 * W * p
-    band = 0.45 * W
-    sd.polygon([(cx - band, H + 200), (cx, -200), (cx + band, -200), (cx + 2 * band, H + 200)],
-               fill=(255, 255, 255, int(120 * p)))
-    img.alpha_composite(shine.filter(ImageFilter.GaussianBlur(70)))
+    sh = 220
+    sd.rectangle([0, foldY - sh / 2, W, foldY + sh / 2], fill=(255, 255, 255, int(150 * p)))
+    img.alpha_composite(shine.filter(ImageFilter.GaussianBlur(60)))
     # hinge glow along the bottom edge
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
@@ -134,7 +147,7 @@ def section(d, x, y, w, title, rows_h):
 # ---------------------------------------------------------------- shots
 base = desktop()
 apply_effect(base.copy(), 0.5).save(OUT / "01-effect-mid-close.png")
-apply_effect(base.copy(), 1.0).save(OUT / "02-effect-wake-dissolve.png")
+apply_effect(base.copy(), 0.75).save(OUT / "02-effect-wake-dissolve.png")
 
 # Shot 3 — Settings window over the desktop
 img = base.copy()
