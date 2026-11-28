@@ -22,15 +22,29 @@
 //  lid stops, the fold melts back down to the hinge and the screen is
 //  clear again.
 //
+//  The fade is what sells the liquid glass, so it is not a flat linear
+//  crossfade:
+//    * The blur and tint ease in (smoothstep) — the content holds sharp,
+//      then melts through the glass, then clears.
+//    * A milky wash peaks mid-fold, like content dissolving through
+//      thick glass, and fades to nothing at either end.
+//    * The crease has a shadow on its folded side as well as a shine,
+//      so the fold reads as a physical bend with depth, not a flat
+//      gradient.
+//    * The shine carries a faint chromatic fringe (cyan/blue edges
+//      around a white core), the way light splits at a glass edge.
+//
+//  Layers, all driven by HingeMonitor.progress:
+//
 //    * REAL blur of what's underneath — an NSVisualEffectView with
 //      .behindWindow blending, so the user's actual desktop dissolves,
 //      not a fake screenshot. No Screen Recording permission needed.
 //      The blur is masked to the folded region below the fold line.
-//    * A blue/cyan liquid-glass tint whose opacity tracks progress,
-//      masked to the same folded region.
-//    * A horizontal crease shine that rides the fold line upward from
-//      the hinge as the lid moves — the visible signature of light
-//      crossing the crease.
+//    * A blue/cyan liquid-glass tint, masked to the same folded region.
+//    * A milky white wash over the folded region, peaking mid-fold.
+//    * A dark crease shadow just below the fold line.
+//    * A horizontal crease shine (with chromatic fringe) riding the
+//      fold line upward from the hinge.
 //    * A soft glow along the bottom edge, like light catching the
 //      hinge itself, plus a barely-there scale (max +2%) so content
 //      feels locked in space while the "glass" moves over it.
@@ -73,11 +87,15 @@ struct GlassOverlayView: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
+            // Eased fade: hold sharp, melt through the glass, clear.
+            let fade = p * p * (3 - 2 * p)
+            // Milky wash peaking mid-fold: dissolving through glass.
+            let milk = sin(Double.pi * p) * 0.28
             ZStack {
                 // 1. Real behind-window blur (the dissolve), folded up
                 //    from the hinge.
                 VisualEffectBlur(material: style.material, blendingMode: .behindWindow)
-                    .opacity(p)
+                    .opacity(fade)
                     .mask(foldMask)
                     .ignoresSafeArea()
 
@@ -87,17 +105,36 @@ struct GlassOverlayView: View {
                     startPoint: .top,
                     endPoint: .bottom
                 )
-                .opacity(p * style.tintOpacity)
+                .opacity(fade * style.tintOpacity)
                 .mask(foldMask)
                 .ignoresSafeArea()
 
-                // 3. Crease shine — a horizontal band of light riding
-                //    the fold line as it rises from the hinge.
+                // 3. Milky wash over the folded region, peaking mid-fold.
+                Color.white
+                    .opacity(milk)
+                    .mask(foldMask)
+                    .ignoresSafeArea()
+
+                // 4. Crease shadow — a dark band just below the fold
+                //    line, on the folded side, giving the bend depth.
+                if !reduceMotion {
+                    Rectangle()
+                        .fill(Color.black.opacity(0.22))
+                        .frame(width: w, height: 110)
+                        .blur(radius: 28)
+                        .offset(y: foldY + 55 - h / 2)
+                        .opacity(fade)
+                        .ignoresSafeArea()
+                }
+
+                // 5. Crease shine — a horizontal band of light riding
+                //    the fold line as it rises from the hinge, with a
+                //    faint chromatic fringe at its edges.
                 if !reduceMotion {
                     Rectangle()
                         .fill(
                             LinearGradient(
-                                colors: [.clear, .white.opacity(0.6), .clear],
+                                colors: [.clear, .cyan.opacity(0.28), .white.opacity(0.6), .blue.opacity(0.28), .clear],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
@@ -105,11 +142,11 @@ struct GlassOverlayView: View {
                         .frame(width: w, height: 140)
                         .blur(radius: 24)
                         .offset(y: foldY - h / 2)
-                        .opacity(p)
+                        .opacity(fade)
                         .ignoresSafeArea()
                 }
 
-                // 4. Hinge glow — light catching the bottom edge of the
+                // 6. Hinge glow — light catching the bottom edge of the
                 //    folding glass at the MacBook hinge.
                 VStack {
                     Spacer()
@@ -123,7 +160,7 @@ struct GlassOverlayView: View {
                         )
                         .frame(height: 90)
                         .blur(radius: 24)
-                        .opacity(p)
+                        .opacity(fade)
                 }
                 .ignoresSafeArea()
             }

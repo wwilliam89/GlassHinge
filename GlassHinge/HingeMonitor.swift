@@ -134,13 +134,20 @@ final class HingeMonitor: NSObject, ObservableObject {
             // Faster hinge movement = stronger glass. A deliberate close
             // runs roughly 60-180 deg/s; cap at full effect.
             let target = min(max(abs(velocity) / 140.0, 0.15), 1)
-            setProgress(progress + (target - progress) * 0.45)
+            // Glide to the target at 60 fps instead of jumping: the
+            // velocity windows only produce a new target ~8x/sec, and a
+            // discrete jump each time reads as a stuttering fold. Each
+            // new target supersedes the previous glide, so the fold
+            // tracks the hinge smoothly.
+            animateProgress(to: target, duration: 0.12)
         }
     }
 
     /// Runs while the sensor is live: when the hinge has been still for
-    /// more than ~0.25 s, decay the glass back to perfectly clear
-    /// (~1 s), whatever angle the lid stopped at.
+    /// more than ~0.25 s, ease the glass back to perfectly clear
+    /// (~1 s total), whatever angle the lid stopped at. One eased
+    /// animation, not a stepped decay — the old 10 Hz multiply-by-0.72
+    /// steps read as a stuttering fade.
     private func startSettleTimer() {
         settleTimer?.invalidate()
         settleTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
@@ -151,8 +158,7 @@ final class HingeMonitor: NSObject, ObservableObject {
                       self.progress > 0 else { return }
                 if let last = self.lastMovementDate,
                    Date().timeIntervalSince(last) > 0.25 {
-                    let next = self.progress * 0.72
-                    self.setProgress(next < 0.02 ? 0 : next)
+                    self.animateProgress(to: 0, duration: 0.8)
                 }
             }
         }
