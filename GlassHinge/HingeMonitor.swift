@@ -4,19 +4,24 @@
 //
 //  Single source of truth for the glass overlay's 0...1 progress value:
 //
-//      0.0 = screen perfectly clear (lid fully open)
-//      1.0 = full glass dissolve (lid closed toward ~28 degrees)
+//      0.0 = screen perfectly clear (angle at/below ~161 degrees —
+//            lid upright or more open)
+//      1.0 = full glass dissolve (angle 180 degrees — lid closed)
 //
 //  Behaviour (product rule, changed 2026-11-27 at the user's word):
 //  the effect is POSITIONAL — it tracks the lid ANGLE, so the glass
-//  follows how wide the lid is open. Open the lid and the blur melts
-//  away; close it and the glass grows; stop at any angle and the blur
-//  stays exactly where the angle puts it. This replaces the original
-//  movement-only rule (glass driven by hinge velocity, settling clear
-//  ~1s after the lid stopped), which the user found odd in testing:
-//  a velocity-driven effect fired repeatedly on a single lid movement
-//  and never felt connected to the lid's position. A foldable's glass
-//  is a state of the fold, not a reaction to motion — so is this.
+//  follows how wide the lid is open.
+//
+//  Angle convention (verified on the user's M5 MacBook Air, 2026-11-27):
+//  the sensor value INCREASES as the lid closes — 0 is open flat,
+//  ~90 is upright, 180 is fully closed. So the glass is CLEAR at and
+//  below ~161 degrees (upright and anything more open) and builds to
+//  full blur at 180 degrees (closed). The first positional build had
+//  this backwards (clear above 110, blur below 28), which made the
+//  screen blurred when upright and clear when closing — the user
+//  caught it and gave the 161-degree threshold. If the sensor on
+//  another Mac reports the opposite convention, the mapping here is
+//  the place to flip it.
 //
 //  Three sources, tried in order, so the app does something useful on
 //  every Mac ("support as many types as possible"):
@@ -56,7 +61,7 @@ final class HingeMonitor: NSObject, ObservableObject {
     // MARK: - Published state
 
     @Published private(set) var progress: Double = 0
-    @Published private(set) var angleDegrees: Double = 110
+    @Published private(set) var angleDegrees: Double = 90
     @Published private(set) var source: Source = .simulation
     @Published private(set) var sensorAvailable = false
 
@@ -66,17 +71,17 @@ final class HingeMonitor: NSObject, ObservableObject {
     private var playOnWake: Bool { UserDefaults.standard.object(forKey: "playOnWake") as? Bool ?? true }
     private var playOnSleep: Bool { UserDefaults.standard.object(forKey: "playOnSleep") as? Bool ?? true }
 
-    /// Angle at/above which the effect is fully off.
-    private var openAngle: Double { UserDefaults.standard.object(forKey: "openAngle") as? Double ?? 110 }
-    /// Angle at/below which the effect is fully on.
-    private var closedAngle: Double { UserDefaults.standard.object(forKey: "closedAngle") as? Double ?? 28 }
+    /// Angle at/below which the effect is fully off (clear).
+    private var openAngle: Double { UserDefaults.standard.object(forKey: "openAngle") as? Double ?? 161 }
+    /// Angle at/above which the effect is fully on (full glass).
+    private var closedAngle: Double { UserDefaults.standard.object(forKey: "closedAngle") as? Double ?? 180 }
 
     // MARK: - Internals
 
     private let sensor = LidAngleSensor()
     private var cancellables: Set<AnyCancellable> = []
     private var animationTask: Task<Void, Never>?
-    private var smoothedAngle: Double = 110
+    private var smoothedAngle: Double = 90
     private var isAnimating = false
 
     // MARK: - Lifecycle
@@ -118,8 +123,8 @@ final class HingeMonitor: NSObject, ObservableObject {
     }
 
     func progressFor(angle: Double) -> Double {
-        let span = max(openAngle - closedAngle, 1)
-        return min(max((openAngle - angle) / span, 0), 1)
+        let span = max(closedAngle - openAngle, 1)
+        return min(max((angle - openAngle) / span, 0), 1)
     }
 
     // MARK: - Workspace fallback path

@@ -17,7 +17,7 @@ struct SettingsView: View {
     @AppStorage("showInDock") private var showInDock = false
 
     @State private var launchAtLogin = false
-    @State private var simAngle = 110.0
+    @State private var simAngle = 90.0
     @State private var simMode = false
 
     var body: some View {
@@ -39,7 +39,7 @@ struct SettingsView: View {
             Section("When it plays") {
                 Toggle("Play when the lid opens (on wake)", isOn: $playOnWake)
                 Toggle("Play when the display goes to sleep", isOn: $playOnSleep)
-                Text("On MacBooks with a lid angle sensor the glass appears while the hinge moves and clears when it stops. On other Macs it plays as a 1.2-second glass dissolve on wake.")
+                Text("On MacBooks with a lid angle sensor the glass follows the lid angle — clear when upright, blurring as you close it. On other Macs it plays as a 1.2-second glass dissolve on wake.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -69,7 +69,7 @@ struct SettingsView: View {
                         else { monitor.endSimulation() }
                     }
                 if simMode {
-                    Slider(value: $simAngle, in: 10...120, step: 1) {
+                    Slider(value: $simAngle, in: 0...180, step: 1) {
                         Text("Lid angle: \(Int(simAngle))°")
                     }
                     .onChange(of: simAngle) { angle in

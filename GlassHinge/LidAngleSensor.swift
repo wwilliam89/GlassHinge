@@ -52,7 +52,11 @@ final class LidAngleSensor {
 
     /// Starts monitoring. Returns true when a sensor device was found.
     /// `onUpdate` is called on a background run loop thread with the angle
-    /// in degrees (roughly 0 = closed, ~100-130 = open flat working range).
+    /// in degrees, 0...180. On the user's M5 MacBook Air the value
+    /// INCREASES as the lid closes (0 = open flat, ~90 = upright,
+    /// 180 = fully closed) — the opposite of the 0 = closed convention
+    /// in the community project's docs, so HingeMonitor maps it
+    /// accordingly (clear at/below ~161 degrees, full glass at 180).
     @discardableResult
     func start(onUpdate: @escaping (Double) -> Void) -> Bool {
         stop()
