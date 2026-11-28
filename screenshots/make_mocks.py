@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Mock App Store screenshots for GlassHinge (2560x1600).
 
-Faithful mocks of the shipped design: a desktop that folds bottom-up
-from the hinge — a fold line rises from the bottom edge, the desktop
-below it dissolves into real Gaussian blur + blue liquid-glass tint, a
-band of light rides the crease, and a glow sits on the hinge — all
-driven by one progress value, the same recipe as GlassOverlayView.swift.
+Faithful mocks of the shipped design: a desktop that folds top-down —
+a fold line sweeps down from the top edge, the desktop above it
+dissolves into real Gaussian blur + blue liquid-glass tint, a band of
+light rides the crease, and a glow sits on the top edge — all driven by
+one progress value, the same recipe as GlassOverlayView.swift.
 UI shots mirror SettingsView / the menu-bar popover. These are mocks for
 review/marketing, not captures from a running Mac.
 """
@@ -82,20 +82,21 @@ def desktop():
 
 # ---------------------------------------------------------------- effect
 def apply_effect(base, p):
-    """Same recipe as GlassOverlayView: bottom-up fold from the hinge.
-    The fold line starts at the bottom edge and rises as p grows; below
-    the line the desktop is folded glass (blur + tint), above it clear,
-    with a band of light riding the crease."""
-    foldY = H * (1 - p)
+    """Same recipe as GlassOverlayView: top-down fold. The fold line
+    starts at the top edge and sweeps down as p grows; above the line
+    the desktop is folded glass (blur + tint + milky wash), below it
+    clear, with a crease shadow on the folded side and a band of light
+    (with a faint chromatic fringe) riding the crease."""
+    foldY = H * p
     band = 180  # soft edge around the crease, px
-    # fold mask: 0 above the crease, 255 below, smooth over the band
+    # fold mask: 255 above the crease, 0 below, smooth over the band
     mask = Image.new("L", (W, H), 0)
     md = ImageDraw.Draw(mask)
     for y in range(H):
         t = (y - (foldY - band)) / (2 * band)
         t = max(0.0, min(1.0, t))
-        a = int(255 * t * t * (3 - 2 * t))  # smoothstep
-        md.line([(0, y), (W, y)], fill=a)
+        s = t * t * (3 - 2 * t)  # smoothstep
+        md.line([(0, y), (W, y)], fill=int(255 * (1 - s)))
     blurred = base.filter(ImageFilter.GaussianBlur(4 + 30 * p))
     img = Image.composite(blurred, base, mask.point(lambda v: int(v * p * 0.96))).convert("RGBA")
     # liquid-glass tint: vertical blue -> cyan, masked to the fold
@@ -108,18 +109,30 @@ def apply_effect(base, p):
         td.line([(0, int(H * t)), (W, int(H * t))], fill=col, width=int(H / steps) + 2)
     tint.putalpha(mask.point(lambda v: int(v * p * 0.9)))
     img.alpha_composite(tint.filter(ImageFilter.GaussianBlur(40)))
-    # crease shine: horizontal band of light riding the fold line up
+    # milky wash over the folded region, peaking mid-fold
+    milk = int(255 * math.sin(math.pi * p) * 0.28)
+    wash = Image.new("RGBA", (W, H), (255, 255, 255, milk))
+    wash.putalpha(mask.point(lambda v: int(v * math.sin(math.pi * p) * 0.28)))
+    img.alpha_composite(wash)
+    # crease shadow: dark band just above the fold line
+    shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow)
+    sd.rectangle([0, foldY - 165, W, foldY - 55], fill=(0, 0, 0, int(56 * p)))
+    img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(28)))
+    # crease shine: white core with a faint cyan/blue fringe, riding the line
     shine = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     sd = ImageDraw.Draw(shine)
     sh = 220
-    sd.rectangle([0, foldY - sh / 2, W, foldY + sh / 2], fill=(255, 255, 255, int(150 * p)))
+    sd.rectangle([0, foldY - sh / 2, W, foldY - 40], fill=(120, 220, 255, int(70 * p)))
+    sd.rectangle([0, foldY - 60, W, foldY + 60], fill=(255, 255, 255, int(150 * p)))
+    sd.rectangle([0, foldY + 40, W, foldY + sh / 2], fill=(90, 120, 255, int(70 * p)))
     img.alpha_composite(shine.filter(ImageFilter.GaussianBlur(60)))
-    # hinge glow along the bottom edge
+    # top-edge glow where the fold starts
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
     for i in range(40):
         a = int(90 * p * (1 - i / 40))
-        gd.line([(0, H - i * 5), (W, H - i * 5)], fill=(190, 225, 255, a), width=5)
+        gd.line([(0, i * 5), (W, i * 5)], fill=(190, 225, 255, a), width=5)
     img.alpha_composite(glow.filter(ImageFilter.GaussianBlur(18)))
     return img.convert("RGB")
 

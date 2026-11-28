@@ -4,16 +4,19 @@
 //
 //  Single source of truth for the glass overlay's 0...1 progress value:
 //
-//      0.0 = screen perfectly clear (the resting state)
-//      1.0 = full glass dissolve
+//      0.0 = screen perfectly clear (lid fully open)
+//      1.0 = full glass dissolve (lid closed toward ~28 degrees)
 //
-//  Behaviour (product rule): the effect is MOVEMENT-ONLY. Glass appears
-//  while the hinge is moving and settles back to fully clear within about
-//  a second of the lid stopping — whatever angle it stops at — so the
-//  screen is never left blurry while you work. On sensor Macs the progress
-//  is driven by hinge VELOCITY, not position. (Simulation mode in Settings
-//  is the one exception: it holds the effect by position, deliberately,
-//  so anyone can preview it and take screenshots.)
+//  Behaviour (product rule, changed 2026-11-27 at the user's word):
+//  the effect is POSITIONAL — it tracks the lid ANGLE, so the glass
+//  follows how wide the lid is open. Open the lid and the blur melts
+//  away; close it and the glass grows; stop at any angle and the blur
+//  stays exactly where the angle puts it. This replaces the original
+//  movement-only rule (glass driven by hinge velocity, settling clear
+//  ~1s after the lid stopped), which the user found odd in testing:
+//  a velocity-driven effect fired repeatedly on a single lid movement
+//  and never felt connected to the lid's position. A foldable's glass
+//  is a state of the fold, not a reaction to motion — so is this.
 //
 //  Three sources, tried in order, so the app does something useful on
 //  every Mac ("support as many types as possible"):
@@ -74,13 +77,6 @@ final class HingeMonitor: NSObject, ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private var animationTask: Task<Void, Never>?
     private var smoothedAngle: Double = 110
-
-    // Movement detection: velocity is measured over a ~120 ms window so
-    // 1-2 degrees of sensor jitter can't fake a movement.
-    private var windowAngle: Double = 110
-    private var windowStart: Date?
-    private var lastMovementDate: Date?
-    private var settleTimer: Timer?
     private var isAnimating = false
 
     // MARK: - Lifecycle
@@ -94,13 +90,10 @@ final class HingeMonitor: NSObject, ObservableObject {
         sensorAvailable = found
         source = found ? .sensor : .workspace
         registerWorkspaceObservers()
-        if found { startSettleTimer() }
     }
 
     func stop() {
         sensor.stop()
-        settleTimer?.invalidate()
-        settleTimer = nil
         animationTask?.cancel()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         NotificationCenter.default.removeObserver(self)
@@ -108,60 +101,20 @@ final class HingeMonitor: NSObject, ObservableObject {
 
     // MARK: - Sensor path
 
+    /// Positional: the glass follows the lid angle. The smoothed angle
+    /// maps straight to progress (openAngle -> clear, closedAngle ->
+    /// full glass), and progress glides to each new value at 60 fps
+    /// with an ease-out, so the fold tracks the hinge smoothly instead
+    /// of jumping — the old velocity-window updates (~8x/sec with a
+    /// 45% jump each time) read as a stuttering fold, and the wake
+    /// reset made one lid movement fire the effect twice.
     private func ingestSensorAngle(_ angle: Double) {
         // Low-pass filter: raw Hall-sensor values jitter by a degree or two.
         smoothedAngle = smoothedAngle + (angle - smoothedAngle) * 0.35
         angleDegrees = smoothedAngle
         guard enabled, source != .simulation else { return }
         source = .sensor
-
-        // Velocity over a ~120 ms window (deg/sec). |v| above ~10 deg/s
-        // sustained across the window counts as the hinge really moving.
-        let now = Date()
-        if windowStart == nil {
-            windowStart = now
-            windowAngle = smoothedAngle
-            return
-        }
-        let dt = now.timeIntervalSince(windowStart!)
-        guard dt >= 0.12 else { return }
-        let velocity = (smoothedAngle - windowAngle) / dt
-        windowStart = now
-        windowAngle = smoothedAngle
-
-        if abs(velocity) > 10 {
-            lastMovementDate = now
-            // Faster hinge movement = stronger glass. A deliberate close
-            // runs roughly 60-180 deg/s; cap at full effect.
-            let target = min(max(abs(velocity) / 140.0, 0.15), 1)
-            // Glide to the target at 60 fps instead of jumping: the
-            // velocity windows only produce a new target ~8x/sec, and a
-            // discrete jump each time reads as a stuttering fold. Each
-            // new target supersedes the previous glide, so the fold
-            // tracks the hinge smoothly.
-            animateProgress(to: target, duration: 0.12)
-        }
-    }
-
-    /// Runs while the sensor is live: when the hinge has been still for
-    /// more than ~0.25 s, ease the glass back to perfectly clear
-    /// (~1 s total), whatever angle the lid stopped at. One eased
-    /// animation, not a stepped decay — the old 10 Hz multiply-by-0.72
-    /// steps read as a stuttering fade.
-    private func startSettleTimer() {
-        settleTimer?.invalidate()
-        settleTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self,
-                      self.source == .sensor,
-                      !self.isAnimating,
-                      self.progress > 0 else { return }
-                if let last = self.lastMovementDate,
-                   Date().timeIntervalSince(last) > 0.25 {
-                    self.animateProgress(to: 0, duration: 0.8)
-                }
-            }
-        }
+        animateProgress(to: progressFor(angle: smoothedAngle), duration: 0.12, easeOut: true)
     }
 
     func progressFor(angle: Double) -> Double {
@@ -193,10 +146,10 @@ final class HingeMonitor: NSObject, ObservableObject {
         // dissolve as the lid opens and the screen lights up.
         guard playOnWake else { return }
         if sensorAvailable {
-            // Reset any stale progress from the close; if the lid is still
-            // moving, the sensor's velocity tracking rebuilds the effect.
-            setProgress(0)
-            lastMovementDate = nil
+            // The sensor owns progress now (positional): the angle
+            // callbacks set the right value as the lid moves. Touching
+            // progress here used to reset it mid-movement and make one
+            // lid movement fire the effect twice.
             return
         }
         progress = 1
@@ -204,16 +157,19 @@ final class HingeMonitor: NSObject, ObservableObject {
     }
 
     @objc private func sessionDidBecomeActive() {
-        guard sensorAvailable == false, playOnWake else { return }
+        guard sensorAvailable == false, playOnWake, !isAnimating else { return }
+        // sessionDidBecomeActive fires on the same wake as screensDidWake;
+        // without the isAnimating guard it restarts the wake dissolve and
+        // the effect plays twice for one lid opening.
         animateProgress(to: 0, duration: 1.2)
     }
 
     // MARK: - Simulation / manual path
 
     /// Drives the effect from the Settings slider (desktop Macs, demos,
-    /// screenshots, App Review). Positional ON PURPOSE: simulation holds
-    /// the effect at the dragged angle so it can be previewed and captured,
-    /// unlike the real hinge, which is movement-only and settles clear.
+    /// screenshots, App Review). Positional by design, same as the real
+    /// hinge now: it holds the effect at the dragged angle so it can be
+    /// previewed and captured.
     func simulate(angle: Double) {
         source = .simulation
         angleDegrees = angle
@@ -245,15 +201,19 @@ final class HingeMonitor: NSObject, ObservableObject {
         progress = min(max(value, 0), 1)
     }
 
-    private func animateProgress(to target: Double, duration: TimeInterval) {
+    private func animateProgress(to target: Double, duration: TimeInterval, easeOut: Bool = false) {
         animationTask?.cancel()
         animationTask = Task { [weak self] in
-            await self?.animate(progressTo: target, duration: duration)
+            await self?.animate(progressTo: target, duration: duration, easeOut: easeOut)
         }
     }
 
-    /// Ease-in-out interpolation at ~60 fps. Cancelled by newer animations.
-    private func animate(progressTo target: Double, duration: TimeInterval) async {
+    /// Interpolates progress at ~60 fps. Cancelled by newer animations.
+    /// Smoothstep (ease-in-out) for timed dissolves; ease-out for the
+    /// sensor path, where each new target supersedes the last — ease-out
+    /// starts fast, so a chain of short glides pursues the hinge instead
+    /// of lagging behind it.
+    private func animate(progressTo target: Double, duration: TimeInterval, easeOut: Bool = false) async {
         isAnimating = true
         defer { isAnimating = false }
         let start = progress
@@ -261,7 +221,7 @@ final class HingeMonitor: NSObject, ObservableObject {
         for i in 1...steps {
             if Task.isCancelled { return }
             let t = Double(i) / Double(steps)
-            let eased = t * t * (3 - 2 * t) // smoothstep
+            let eased = easeOut ? (1 - (1 - t) * (1 - t)) : (t * t * (3 - 2 * t))
             setProgress(start + (target - start) * eased)
             try? await Task.sleep(nanoseconds: 16_666_667)
         }
