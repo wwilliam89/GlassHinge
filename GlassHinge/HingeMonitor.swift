@@ -4,8 +4,8 @@
 //
 //  Single source of truth for the glass overlay's 0...1 progress value:
 //
-//      0.0 = screen perfectly clear (angle at/below ~161 degrees —
-//            lid upright or more open)
+//      0.0 = screen perfectly clear (angle at/below ~130 degrees —
+//            open flat through upright to about half-closed)
 //      1.0 = full glass dissolve (angle 180 degrees — lid closed)
 //
 //  Behaviour (product rule, changed 2026-11-27 at the user's word):
@@ -14,14 +14,16 @@
 //
 //  Angle convention (verified on the user's M5 MacBook Air, 2026-11-27):
 //  the sensor value INCREASES as the lid closes — 0 is open flat,
-//  ~90 is upright, 180 is fully closed. So the glass is CLEAR at and
-//  below ~161 degrees (upright and anything more open) and builds to
-//  full blur at 180 degrees (closed). The first positional build had
-//  this backwards (clear above 110, blur below 28), which made the
-//  screen blurred when upright and clear when closing — the user
-//  caught it and gave the 161-degree threshold. If the sensor on
-//  another Mac reports the opposite convention, the mapping here is
-//  the place to flip it.
+//  ~50 is max open (tilted back), ~90 is upright, 180 is fully
+//  closed. Validated across the full range: the glass is CLEAR from
+//  open flat through upright up to ~130 degrees, then fades in from
+//  about half-closed (lid halfway from upright to closed, ~135
+//  degrees) and builds to full blur at 180 degrees (closed). The
+//  first positional build used a 161-degree threshold, which only
+//  showed the effect for the last 19 degrees of travel — the user
+//  called it out as showing "very briefly" and asked for the
+//  half-closed rule instead. If the sensor on another Mac reports the
+//  opposite convention, the mapping here is the place to flip it.
 //
 //  Three sources, tried in order, so the app does something useful on
 //  every Mac ("support as many types as possible"):
@@ -71,8 +73,10 @@ final class HingeMonitor: NSObject, ObservableObject {
     private var playOnWake: Bool { UserDefaults.standard.object(forKey: "playOnWake") as? Bool ?? true }
     private var playOnSleep: Bool { UserDefaults.standard.object(forKey: "playOnSleep") as? Bool ?? true }
 
-    /// Angle at/below which the effect is fully off (clear).
-    private var openAngle: Double { UserDefaults.standard.object(forKey: "openAngle") as? Double ?? 161 }
+    /// Angle at/below which the effect is fully off (clear) — about
+    /// half-closed from upright, so the fade covers the second half
+    /// of the closing motion.
+    private var openAngle: Double { UserDefaults.standard.object(forKey: "openAngle") as? Double ?? 130 }
     /// Angle at/above which the effect is fully on (full glass).
     private var closedAngle: Double { UserDefaults.standard.object(forKey: "closedAngle") as? Double ?? 180 }
 
